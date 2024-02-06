@@ -1,0 +1,47 @@
+Metadata-Version: 2.1
+Name: NSFopen
+Version: 2.2.0
+Summary: Python module to open Nanosurf NID and NHF files
+Author: Nanosurf AG
+Author-email: scripting@nanosurf.com
+License: MIT
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: Microsoft :: Windows
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: matplotlib
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: pandas
+Requires-Dist: h5py
+
+# NSFopen
+Open Nanosurf NID files in Python
+
+## Installing
+From source
+```
+python setup.py install
+```
+or from PyPi
+```
+pip install nanosurf
+```
+
+## Prequisites
+numpy
+pandas
+h5py
+
+## Example Script
+Available in example folder
+
+### Example: NID File
+```
+from NSFopen.read import read
+afm = nid_read('filename.nid')
+data = afm.data # raw data
+param = afm.param # parameters
+```
