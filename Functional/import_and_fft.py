@@ -7,17 +7,20 @@ import numpy.fft as fft
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.optimize import fsolve
 import warnings
+import pandas as pd
+import shutil
 
 warnings.filterwarnings("ignore", message="divide by zero encountered in log10")
 
 current_dir = Path(os.getcwd())
 parent_dir = current_dir.parent
-data_folder = "/Users/thomashartigan/Library/CloudStorage/GoogleDrive-tjh200@cam.ac.uk/My Drive/E2/Images/Initial Testing/Setup A/" #parent_dir.as_posix() +'/Raw_Data/'
+data_folder = "/Users/thomashartigan/Library/CloudStorage/GoogleDrive-tjh200@cam.ac.uk/My Drive/E2/Images/3nm_lattice/" #parent_dir.as_posix() +'/Raw_Data/'
+copy_folder = "/Users/thomashartigan/Library/CloudStorage/GoogleDrive-tjh200@cam.ac.uk/My Drive/E2/Images/3nm_lattice/"
 
 class Data_Image():
-    def __init__(self, image_number):
-        data_folder = "/Users/thomashartigan/Library/CloudStorage/GoogleDrive-tjh200@cam.ac.uk/My Drive/E2/Images/Initial Testing/Setup A/"
-        self.image_path = data_folder + "Image" + image_number + ".nid"
+    def __init__(self, image_path):
+        #data_folder = "/Users/thomashartigan/Library/CloudStorage/GoogleDrive-tjh200@cam.ac.uk/My Drive/E2/Images/Initial Testing/Setup A/"
+        self.image_path = image_path #data_folder + "Image" + image_number + ".nid"
         self.import_data()
     
     def import_data(self):
@@ -31,33 +34,30 @@ class Data_Image():
         #print(data.keys())
         #print(param.keys())
         self.forward_current = data['Image']['Forward']['Tip Current']
+        self.forward_current = self.average_rowcol(self.forward_current)
         self.forward_current_frequencies, self.forward_current_fft = self.fft_data(self.forward_current, True)
         self.forward_current_peaks_array, self.forward_current_peak_image = self.detect_peaks(np.log10(abs(self.forward_current_fft)))
         self.backward_current = data['Image']['Backward']['Tip Current']
+        self.backward_current = self.average_rowcol(self.backward_current)
         self.backward_current_frequencies, self.backward_current_fft = self.fft_data(self.backward_current, True)
         self.backward_current_peaks_array, self.backward_current_peak_image = self.detect_peaks(np.log10(abs(self.backward_current_fft)))
         self.forward_z = data['Image']['Forward']['Z-Axis']
+        self.forward_z = self.average_rowcol(self.forward_z)
         #self.forward_z = self.rotate_z_data(self.forward_z)
         self.forward_z_frequencies, self.forward_z_fft = self.fft_data(self.forward_z, False)
         #self.forward_z = np.abs(fft.ifft2(self.forward_z_fft))
         self.forward_z_peaks_array, self.forward_z_peak_image = self.detect_peaks(np.log10(abs(self.forward_z_fft)))
         self.backward_z = data['Image']['Backward']['Z-Axis']
+        self.backward_z = self.average_rowcol(self.backward_z)
         #self.backward_z = self.rotate_z_data(self.backward_z)
         self.backward_z_frequencies, self.backward_z_fft = self.fft_data(self.backward_z, False)
         self.backward_z_peaks_array, self.backward_z_peak_image = self.detect_peaks(np.log10(abs(self.backward_z_fft)))
         
         
-    def rotate_z_data(self, dataset):
-        x_angle = self.params['Scan']['rotation']['Value'][1]
-        y_angle = self.params['Scan']['rotation']['Value'][0]
-        n = len(dataset[0])
-        step_length = self.size / n
-        x_corrections = np.linspace(0, self.size, n) * np.tan(x_angle)
-        y_corrections = np.transpose([np.linspace(self.size, 0, n) * np.tan(y_angle)])
-        xy_corrections = x_corrections + y_corrections
-        #print(xy_corrections) 
-        return xy_corrections/1000 +dataset
-        #X_corrections, Y_corrections = np.meshgrid(x_corrections + y_corrections)
+    def average_rowcol(self, dataset):
+        dataset_rowavgd = [row - np.mean(row) for row in dataset]
+        dataset_colavgd = np.transpose([col - np.mean(col) for col in np.transpose(dataset_rowavgd)])
+        return dataset_colavgd
         
 
         
@@ -218,13 +218,23 @@ class Data_Image():
         ls = self.get_ls(pixel_displacements_cartesian)
         params_init = [2.15E-10, np.pi /6, np.pi /6, np.pi /6]
         #print(l0, l1)
-        if len(ls) > 1:
+        if len(ls) == 3:
             params = fsolve(self.rotation_equations, x0=params_init, args=ls)
             ##print(params)
             rotated_ls = []
             for l in ls:
                 rotated_ls.append(self.unrotate([l[0], l[1], 0], -params[1], -params[2], -params[3]))
             ##print(rotated_ls)
+            print(f"lattice param estimate: {params[0] * 2/3}")
+            lattice_const = params[0] * 2/3
+            #average_displacement = np.average(1/distance_displacements * 2/3)
+            if lattice_const < 0.146E-9 and lattice_const > 0.136E-9:
+                if lattice_const in self.lattice_param_estimates:
+                    pass
+                else:
+                    self.lattice_param_estimates.append(lattice_const)
+            else:
+                print("Lattice value discarded")
         else:
             print("insufficient points to find rotations")
         
@@ -232,13 +242,8 @@ class Data_Image():
         
         #distance_displacements = self.fourier_distance([np.linalg.norm(vector) for vector in pixel_displacements_cartesian])
         #print(distance_displacements)
-        print(f"lattice param estimate: {params[0] * 2/3}")
-        #average_displacement = np.average(1/distance_displacements * 2/3)
-        #if average_displacement < 0.16E-9 and average_displacement > 0.12E-9:
-        #    self.peak_inverse_distances.append(distance_displacements)
-        #    self.lattice_param_estimates.append(average_displacement)
-        #else:
-        #    print("lattice param was thought unreasonable")
+
+  
 
     def get_ls(self, peak_vectors):
         ls = []
@@ -339,15 +344,51 @@ class Data_Image():
                         [0, 0, 1]])
         R = Rx @ Ry @ Rz
         return np.squeeze(np.asarray(R @ np.transpose(np.matrix(vector))))
+
+lattice_params = []
+
+directory = os.fsencode(data_folder)
+lattice_directory = os.fsencode(copy_folder)
+i = 0
+setup = {'Image_Number': [],
+         'L0': []}
+for file in os.listdir(directory):
+    try:
+        print(str(os.path.join(directory, file)))
+        filename = os.fsencode(file)
+        image = Data_Image(os.path.join(directory, file).decode('UTF-8'))
+        #print(os.path.join(directory, file))
+        #print(image.lattice_param_estimates)
+        for estimate in image.lattice_param_estimates:
+            lattice_params.append(estimate)
+        if len(image.lattice_param_estimates) != 0:
+            print("A")
+            print(os.path.join(lattice_directory, file).decode('UTF-8'))
+            print("B")
+            if image.size==3E-9:
+                print("3nm")
+                #shutil.copy(os.path.join(directory, file).decode('UTF-8'), os.path.join(lattice_directory, file).decode('UTF-8'))
+    except Exception as inst:
+        print(f"An error occured with processing this iamge {inst}")
+    i += 1
+    print(i)
+    print(lattice_params)
+    print(f"Current average: {np.mean(np.array(lattice_params).flatten())}")
+    if i == 20000:
+        break
+print(f"Final average: {np.mean(lattice_params)}")
+print(f"Final st.dev: {np.std(lattice_params)} with {len(lattice_params)} datapoints")
+"""
 #A04782 B14000 #B14005 #A05424 #A04790 #B14075 #A07050
-image_of_interest = Data_Image("04790")
+image_number = "04911"
+image_of_interest = Data_Image(data_folder + "Image" + image_number + ".nid")
 a = image_of_interest.rotate([1,1,1], 0.3, 0.2, 1.5)
 ##print(image_of_interest.unrotate(a, -0.3, -0.2, -1.5))
 fig, axs = image_of_interest.plot_image_and_ffts()
-#print(image_of_interest.lattice_param_estimates)
+print(image_of_interest.lattice_param_estimates)
 plt.show()
 fig.show()
 
 
 #plt.imshow(image_of_interest.detect_peaks(np.log10(abs(image_of_interest.forward_current_fft))), cmap = 'Blues')
-#plt.show()
+#plt.show()"""
