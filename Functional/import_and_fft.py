@@ -5,6 +5,10 @@ import os
 import matplotlib.pyplot as plt
 import numpy.fft as fft
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from scipy.optimize import fsolve
+import warnings
+
+warnings.filterwarnings("ignore", message="divide by zero encountered in log10")
 
 current_dir = Path(os.getcwd())
 parent_dir = current_dir.parent
@@ -38,7 +42,7 @@ class Data_Image():
         #self.forward_z = np.abs(fft.ifft2(self.forward_z_fft))
         self.forward_z_peaks_array, self.forward_z_peak_image = self.detect_peaks(np.log10(abs(self.forward_z_fft)))
         self.backward_z = data['Image']['Backward']['Z-Axis']
-        self.backward_z = self.rotate_z_data(self.backward_z)
+        #self.backward_z = self.rotate_z_data(self.backward_z)
         self.backward_z_frequencies, self.backward_z_fft = self.fft_data(self.backward_z, False)
         self.backward_z_peaks_array, self.backward_z_peak_image = self.detect_peaks(np.log10(abs(self.backward_z_fft)))
         
@@ -51,7 +55,7 @@ class Data_Image():
         x_corrections = np.linspace(0, self.size, n) * np.tan(x_angle)
         y_corrections = np.transpose([np.linspace(self.size, 0, n) * np.tan(y_angle)])
         xy_corrections = x_corrections + y_corrections
-        print(xy_corrections) 
+        #print(xy_corrections) 
         return xy_corrections/1000 +dataset
         #X_corrections, Y_corrections = np.meshgrid(x_corrections + y_corrections)
         
@@ -138,11 +142,25 @@ class Data_Image():
     
     def fourier_distance(self, pixel_length):
         """Converts the number of pixels to the corresponding inverse distance in the fourier domain"""
-        length_per_pixel = max(self.forward_current_frequencies) * 2 / len(self.forward_current_fft[0])
+        #print(len(self.forward_current_fft[0]-1))
+        length_per_pixel = (max(self.forward_current_frequencies) - min(self.forward_current_frequencies)) / (len(self.forward_current_fft[0])-1)
         return np.array(pixel_length) * length_per_pixel
     
     def real_distance(self, fourier_pixel_length):
         return 1/self.fourier_distance(fourier_pixel_length)
+    
+    def fourier_pixel_vectors_to_real_vector(self, vectors):
+        real_vectors = []
+        for vector in vectors:
+            vector = np.array(vector)
+            norm = np.linalg.norm(vector)
+            length_per_pixel = (max(self.forward_current_frequencies) - min(self.forward_current_frequencies)) / (len(self.forward_current_fft[0])-1)
+            #print(f'length per pixel: {length_per_pixel}')
+            real_length = 1/(norm * length_per_pixel)
+            #print(real_length)
+            real_vector = real_length / (norm * length_per_pixel) * vector * length_per_pixel
+            real_vectors.append(real_vector)
+        return real_vectors
 
 
 
@@ -177,26 +195,159 @@ class Data_Image():
 
         peak_image[peak_image == 0] = -np.infty
 
+        # Find the peak displacements from the origin
         self.peak_displacements(max_inds)
         return max_inds, peak_image 
     
     def peak_displacements(self, max_inds):
         pixel_displacements = np.array(max_inds) - np.array([self.middle_n, self.middle_n])
-
-        distance_displacements = self.fourier_distance([np.linalg.norm(vector) for vector in pixel_displacements])
-        average_displacement = np.average(1/distance_displacements * 2/3)
-        if average_displacement < 0.16E-9 and average_displacement > 0.12E-9:
-            self.peak_inverse_distances.append(distance_displacements)
-            self.lattice_param_estimates.append(average_displacement)
+        #[1,2]-> [2,-1], [-1,2] -> [2,1], [1,-2] -> [-2,-1] & [-1,-2] -> [-2,1]
+        # none -> 2, 1 -> 1, 2 -> 1 and 12 -> 2
+        pixel_displacements_cartesian = []
+        for pixel_displacement in pixel_displacements:
+            if pixel_displacement[0] <= 0 and pixel_displacement[1] <= 0:
+                pixel_displacements_cartesian.append([pixel_displacement[1], -pixel_displacement[0]])
+            elif pixel_displacement[0] <= 0:
+                pixel_displacements_cartesian.append([pixel_displacement[1], -pixel_displacement[0]])
+            elif pixel_displacement[1] <= 0:
+                pixel_displacements_cartesian.append([pixel_displacement[1], -pixel_displacement[0]])
+            else:
+                pixel_displacements_cartesian.append([pixel_displacement[1], -pixel_displacement[0]])
+            #print(f'{pixel_displacement} -> {pixel_displacements_cartesian[len(pixel_displacements_cartesian)-1]}')
+        
+        ls = self.get_ls(pixel_displacements_cartesian)
+        params_init = [2.15E-10, np.pi /6, np.pi /6, np.pi /6]
+        #print(l0, l1)
+        if len(ls) > 1:
+            params = fsolve(self.rotation_equations, x0=params_init, args=ls)
+            ##print(params)
+            rotated_ls = []
+            for l in ls:
+                rotated_ls.append(self.unrotate([l[0], l[1], 0], -params[1], -params[2], -params[3]))
+            ##print(rotated_ls)
         else:
-            print("lattice param was thought unreasonable")
+            print("insufficient points to find rotations")
+        
+        #print(pixel_displacements_cartesian)
+        
+        #distance_displacements = self.fourier_distance([np.linalg.norm(vector) for vector in pixel_displacements_cartesian])
+        #print(distance_displacements)
+        print(f"lattice param estimate: {params[0] * 2/3}")
+        #average_displacement = np.average(1/distance_displacements * 2/3)
+        #if average_displacement < 0.16E-9 and average_displacement > 0.12E-9:
+        #    self.peak_inverse_distances.append(distance_displacements)
+        #    self.lattice_param_estimates.append(average_displacement)
+        #else:
+        #    print("lattice param was thought unreasonable")
 
+    def get_ls(self, peak_vectors):
+        ls = []
+        #print(f"peak vectors: {peak_vectors}")
+        peak_vectors = np.array(peak_vectors)
+        for i in range(0,3):
+                if len(peak_vectors) > 0:
+                    #print(f"peak vectors: {peak_vectors}")
+                    peak_vectors = peak_vectors[peak_vectors[:,1]>0]
+                    # Finds the points furthest in the positive x-direction
+                    l_draws = peak_vectors[(np.argwhere(peak_vectors[:,0] == np.max(peak_vectors, axis=0)[0])).flatten()]
+                    # If there is such a point, then find the one of these closest to the x-axis
+                    if len(l_draws) != 0:
+                        l_win = l_draws[(np.argwhere(l_draws[:,1] == np.min(l_draws, axis=0)[1])).flatten()].flatten()
+                        if np.linalg.norm(self.fourier_pixel_vectors_to_real_vector(l_win)) > 1E-10:
+                            pv_list = peak_vectors.tolist()
+                            pv_list.remove(list(l_win))
+                            peak_vectors = np.array(pv_list)
+                            ls.append(l_win.tolist())
+        #if np.arccos(np.dot(l0_and_l1[0], l0_and_l1[1]) / (np.linalg.norm(l0_and_l1[0]) * np.linalg.norm(l0_and_l1[1]))) > np.pi * 70/180:
+        #    print("Actually dealing with l2")
+        #print(f'frequency coords: {l0_and_l1}')
+        ls = self.fourier_pixel_vectors_to_real_vector(ls)
+        ##print(f'real space positions: {ls}')
+        return (ls)
     
-#A04782 B14000 #B14005 #A05424
+    def rotation_equations(self, w, ls):
+        # w = (l0, alpha, beta, gamma)
+        
+        l0 = w[0]
+        alpha = w[1]
+        beta = w[2]
+        gamma = w[3]
+        
+        if len(ls) == 3:
+            l1_est = self.rotate([l0, 0, 0], alpha, beta, gamma)
+            l2_est = self.rotate([l0 * np.cos(np.pi/3), l0 * np.sin(np.pi/3), 0], alpha, beta, gamma)
+            l3_est = self.rotate([-l0 * np.cos(np.pi/3), l0 * np.sin(np.pi/3), 0], alpha, beta, gamma)
+        
+            l1x = ls[0][0]
+            l1y = ls[0][1]
+            l2x = ls[1][0]
+            l2y = ls[1][1]
+            l3x = ls[2][0]
+            l3y = ls[2][1]
+            
+            F = np.zeros(4)
+            F[0] = l2_est[0]-l3_est[0] - (l2x-l3x)
+            F[1] = l2_est[1]-l3_est[1] - (l2y-l3y)
+            F[2] = l1_est[0]-l2_est[0] - (l1x-l2x)
+            F[3] = l1_est[1]-l2_est[1] - (l1y-l2y)
+        else:
+            F = [0,0,0,0]
+            print("not enough ls")
+            
+        #F[0] = l1_est[0] - l1x
+        #print(l1_est[0], l1x)
+        #F[1] = l1_est[1] - l1y
+        #F[2] = l2_est[0] - l2x
+        #F[3] = l2_est[1] - l2y
+        #if len(ls) == 3:
+        #    F[4] = l3_est[0] - l3x
+        #    F[5] = l3_est[1] - l3y
+        return F
+    
+    def rotate(self, vector, alpha, beta, gamma):
+        cos = np.cos
+        sin = np.sin
+        Rx = np.matrix([[1, 0, 0],
+                        [0, cos(alpha), -sin(alpha)],
+                        [0, sin(alpha), cos(alpha)]])
+        Ry = np.matrix([[cos(beta), 0, sin(beta)],
+                        [0, 1, 0],
+                        [-sin(beta), 0, cos(beta)]])
+        Rz = np.matrix([[cos(gamma), -sin(gamma), 0],
+                        [sin(gamma), cos(gamma), 0],
+                        [0, 0, 1]])
+        
+        R = Rz @ Ry @ Rx
+        #R = np.matrix([[cos(beta) * cos(gamma), sin(alpha) * sin(beta) * cos(gamma) - cos(alpha) * sin(gamma), cos(alpha) * sin(beta) * cos(gamma) + sin(alpha) * sin(gamma)],
+         #              [cos(beta) * sin(gamma), sin(alpha) * sin(beta) * sin(gamma) + cos(alpha) * cos(gamma), cos(alpha) * sin(beta) * sin(gamma) - sin(alpha) * cos(gamma)],
+         #              [-sin(beta), sin(alpha) * cos(beta), cos(alpha) * cos(beta)]])
+        #print(np.matmul(R, np.transpose(np.matrix(vector))).flatten().tolist()[0])
+    
+        return np.matmul(R, np.transpose(np.matrix(vector))).flatten().tolist()[0]
+
+    def unrotate(self, vector, alpha, beta, gamma):
+        cos = np.cos
+        sin = np.sin
+        Rx = np.matrix([[1, 0, 0],
+                        [0, cos(alpha), -sin(alpha)],
+                        [0, sin(alpha), cos(alpha)]])
+        Ry = np.matrix([[cos(beta), 0, sin(beta)],
+                        [0, 1, 0],
+                        [-sin(beta), 0, cos(beta)]])
+        Rz = np.matrix([[cos(gamma), -sin(gamma), 0],
+                        [sin(gamma), cos(gamma), 0],
+                        [0, 0, 1]])
+        R = Rx @ Ry @ Rz
+        return np.squeeze(np.asarray(R @ np.transpose(np.matrix(vector))))
+#A04782 B14000 #B14005 #A05424 #A04790 #B14075 #A07050
 image_of_interest = Data_Image("04790")
+a = image_of_interest.rotate([1,1,1], 0.3, 0.2, 1.5)
+##print(image_of_interest.unrotate(a, -0.3, -0.2, -1.5))
 fig, axs = image_of_interest.plot_image_and_ffts()
-print(image_of_interest.lattice_param_estimates)
-fig.show()
+#print(image_of_interest.lattice_param_estimates)
 plt.show()
+fig.show()
+
+
 #plt.imshow(image_of_interest.detect_peaks(np.log10(abs(image_of_interest.forward_current_fft))), cmap = 'Blues')
 #plt.show()
