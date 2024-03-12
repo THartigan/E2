@@ -77,7 +77,7 @@ def unrotate(vector, alpha, beta, gamma):
                         [0, 0, 1]])
         R = Rx @ Ry @ Rz
         return np.squeeze(np.asarray(R @ np.transpose(np.matrix(vector))))
-
+"""
 for i in range(0,1000):
         hexagon = np.array([[5,0,0], [5 * np.cos(np.pi/3), 5 * np.sin(np.pi/3), 0], [-5 * np.cos(np.pi/3), 5 * np.sin(np.pi/3), 0], [-5,0,0], [-5 * np.cos(np.pi/3), -5 * np.sin(np.pi/3), 0], [5 * np.cos(np.pi/3), -5 * np.sin(np.pi/3), 0], [5,0,0]])
         alpha = np.random.uniform(0, np.pi/2)
@@ -118,9 +118,13 @@ for i in range(0,1000):
                 fig.show()
                 plt.show()
 print("Finished test")
-
-
-"""fig = plt.figure()
+"""
+hexagon = np.array([[5,0,0], [5 * np.cos(np.pi/3), 5 * np.sin(np.pi/3), 0], [-5 * np.cos(np.pi/3), 5 * np.sin(np.pi/3), 0], [-5,0,0], [-5 * np.cos(np.pi/3), -5 * np.sin(np.pi/3), 0], [5 * np.cos(np.pi/3), -5 * np.sin(np.pi/3), 0], [5,0,0]])
+alpha = np.random.uniform(0, np.pi/2)
+beta = np.random.uniform(0, np.pi/2)
+gamma = np.random.uniform(0, np.pi/2)
+rotated_hexagon = np.array([rotate(vector, alpha, beta, gamma) for vector in hexagon])
+fig = plt.figure()
 ax= plt.axes(projection="3d")
 hex_x, hex_y, hex_z = hexagon[:,0], hexagon[:,1], hexagon[:,2]
 ax.plot3D(hex_x, hex_y, hex_z)
@@ -128,4 +132,4 @@ rot_x, rot_y, rot_z = rotated_hexagon[:,0], rotated_hexagon[:,1], rotated_hexago
 ax.plot3D(rot_x, rot_y, rot_z)
 ax.view_init(elev=90, azim=0)
 fig.show()
-plt.show()"""
+plt.show()

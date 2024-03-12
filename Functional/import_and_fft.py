@@ -24,43 +24,46 @@ class Data_Image():
         self.import_data()
     
     def import_data(self):
-        afm = ns.read(self.image_path)
-        data = afm.data # raw data
-        param = afm.param # parameters
-        self.params = param
+        stm = ns.read(self.image_path)
+        self.data = stm.data # raw data
+        self.params = stm.param # parameters
+        self.size = self.params['Scan']['range']['Value'][0]
+        self.forward_current = self.data['Image']['Forward']['Tip Current']
+        self.forward_current = self.average_rowcol(self.forward_current)
+        self.backward_current = self.data['Image']['Backward']['Tip Current']
+        self.backward_current = self.average_rowcol(self.backward_current)
+        self.forward_z = self.data['Image']['Forward']['Z-Axis']
+        self.forward_z = self.average_rowcol(self.forward_z)
+        self.backward_z = self.data['Image']['Backward']['Z-Axis']
+        self.backward_z = self.average_rowcol(self.backward_z)
+
+    def fft_lattice_param_estimate(self):
+        """To be called after import_data"""
         self.peak_inverse_distances = []
         self.lattice_param_estimates = []
-        self.size = self.params['Scan']['range']['Value'][0]
+        
         #print(data.keys())
         #print(param.keys())
-        self.forward_current = data['Image']['Forward']['Tip Current']
-        self.forward_current = self.average_rowcol(self.forward_current)
+        
         self.forward_current_frequencies, self.forward_current_fft = self.fft_data(self.forward_current, True)
         self.forward_current_peaks_array, self.forward_current_peak_image = self.detect_peaks(np.log10(abs(self.forward_current_fft)))
-        self.backward_current = data['Image']['Backward']['Tip Current']
-        self.backward_current = self.average_rowcol(self.backward_current)
+        
         self.backward_current_frequencies, self.backward_current_fft = self.fft_data(self.backward_current, True)
         self.backward_current_peaks_array, self.backward_current_peak_image = self.detect_peaks(np.log10(abs(self.backward_current_fft)))
-        self.forward_z = data['Image']['Forward']['Z-Axis']
-        self.forward_z = self.average_rowcol(self.forward_z)
+        
         #self.forward_z = self.rotate_z_data(self.forward_z)
         self.forward_z_frequencies, self.forward_z_fft = self.fft_data(self.forward_z, False)
         #self.forward_z = np.abs(fft.ifft2(self.forward_z_fft))
         self.forward_z_peaks_array, self.forward_z_peak_image = self.detect_peaks(np.log10(abs(self.forward_z_fft)))
-        self.backward_z = data['Image']['Backward']['Z-Axis']
-        self.backward_z = self.average_rowcol(self.backward_z)
+        
         #self.backward_z = self.rotate_z_data(self.backward_z)
         self.backward_z_frequencies, self.backward_z_fft = self.fft_data(self.backward_z, False)
         self.backward_z_peaks_array, self.backward_z_peak_image = self.detect_peaks(np.log10(abs(self.backward_z_fft)))
-        
         
     def average_rowcol(self, dataset):
         dataset_rowavgd = [row - np.mean(row) for row in dataset]
         dataset_colavgd = np.transpose([col - np.mean(col) for col in np.transpose(dataset_rowavgd)])
         return dataset_colavgd
-        
-
-        
 
     def fft_data(self, dataset, is_current: bool):
         dataset_fft = fft.fft2(dataset)
@@ -118,26 +121,74 @@ class Data_Image():
 
         im[2][0] = axs[2,0].imshow(self.forward_current_peak_image, interpolation = 'none', extent=[min(self.forward_current_frequencies), max(self.forward_current_frequencies), min(self.forward_current_frequencies), max(self.forward_current_frequencies)], aspect=1, cmap = 'winter')
         axs[2,0].set_title('Forward Current Peaks')
-        axs[2,0].set_facecolor('xkcd:salmon')
+        axs[2,0].set_facecolor('gray')
 
         im[2][1] = axs[2,1].imshow(self.backward_current_peak_image, interpolation = 'none', extent=[min(self.backward_current_frequencies), max(self.backward_current_frequencies), min(self.backward_current_frequencies), max(self.backward_current_frequencies)], aspect=1, cmap = 'winter')
         axs[2,1].set_title('Backward Current Peaks')
-        axs[2,1].set_facecolor('xkcd:salmon')
+        axs[2,1].set_facecolor('gray')
 
         im[2][2] = axs[2,2].imshow(self.forward_z_peak_image, interpolation = 'none', extent=[min(self.forward_z_frequencies), max(self.forward_z_frequencies), min(self.forward_z_frequencies), max(self.forward_z_frequencies)], aspect=1, cmap = 'winter')
         axs[2,2].set_title('Forward Z Peaks')
-        axs[2,2].set_facecolor('xkcd:salmon')
+        axs[2,2].set_facecolor('gray')
 
         im[2][3] = axs[2,3].imshow(self.backward_z_peak_image, interpolation = 'none', extent=[min(self.backward_z_frequencies), max(self.backward_z_frequencies), min(self.backward_z_frequencies), max(self.backward_z_frequencies)], aspect=1, cmap = 'winter')
         axs[2,3].set_title('Backward Z Peaks')
-        axs[2,3].set_facecolor('xkcd:salmon')
+        axs[2,3].set_facecolor('gray')
         # Peak images
         for i in range(0,3):
             for j in range(0,4):
                 divider = make_axes_locatable(axs[i,j])
                 cax = divider.append_axes('right', size='5%', pad=0.05)
                 fig.colorbar(im[i][j], cax=cax, orientation='vertical')
+                axs[i,j].set_xlabel("x distance / m")
+                axs[i,j].set_ylabel("y distance / m")
+                #axs[i,j].set_zlabel("z distance / m")
         fig.tight_layout()
+        return(fig, axs)
+    
+    def row_plot_z_forward(self):
+        real_axis_factor = 1E9
+        inverse_axis_factor = 1/real_axis_factor
+        real_space_length = self.size
+        im = [None, None, None]
+
+        fig, axs = plt.subplots(1, 1, figsize = (3, 3) )
+
+        #im[0] = axs.imshow(self.forward_z * real_axis_factor * 1E3, interpolation = 'none', extent=[0, real_space_length * real_axis_factor, 0, real_space_length * real_axis_factor], aspect=1)
+        #axs.set_title('HOPG Atomic Electron Density', fontsize='medium')
+        #axs.set_xlabel("x position / $nm$")
+        #axs.set_ylabel("y position / $nm$")
+        #axs[0].set_title("a)", fontfamily='serif', loc='left', fontsize='medium')
+        #axs[0].colorbar.set_label('z distance / nm')
+        #fig.colorbar.set_label('z distance', rotation=270)
+
+        #im[1] = axs.imshow(np.log10(abs(self.forward_z_fft)), interpolation = 'none', extent=[min(self.forward_z_frequencies) * inverse_axis_factor, max(self.forward_z_frequencies)* inverse_axis_factor, min(self.forward_z_frequencies)* inverse_axis_factor, max(self.forward_z_frequencies)* inverse_axis_factor], aspect=1)
+        #axs.set_title('Electron Density (Fourier Domain)', fontsize='medium')
+        #axs.set_xlabel("x inverse position / $nm^{-1}$")
+        #axs.set_ylabel("y inverse position / $nm^{-1}$")
+        ##axs[1].set_title("b)", fontfamily='serif', loc='left', fontsize='medium')
+
+        im[2] = axs.imshow(self.forward_z_peak_image, interpolation = 'none', extent=[min(self.forward_z_frequencies)* inverse_axis_factor, max(self.forward_z_frequencies)* inverse_axis_factor, min(self.forward_z_frequencies)* inverse_axis_factor, max(self.forward_z_frequencies)* inverse_axis_factor], aspect=1, cmap = 'winter')
+        axs.set_title('Electron Density Peaks (Fourier Domain)', fontsize='small')
+        axs.set_facecolor('gray')
+        axs.set_xlabel("x inverse position / $nm^{-1}$")
+        axs.set_ylabel("y inverse position / $nm^{-1}$")
+        axs.set_xlim([-10,10])
+        axs.set_ylim([-10,10])
+        ##axs[2].set_title("c)", fontfamily='serif', loc='left', fontsize='medium')
+
+        # Peak images
+        for i in range(0,1):
+            for j in range(0,1):
+                labels = ["z position / pm", "$\log_{10}$(intensity)", "$\log_{10}$(intensity)"]
+                divider = make_axes_locatable(axs)
+                cax = divider.append_axes('right', size='5%', pad=0.05)
+                fig.colorbar(im[j], cax=cax, orientation='vertical', label=labels[j])
+                
+                #axs[j].set_ylabel("y distance / nm")
+                #axs[j].set_xlabel("x distance / nm")
+                #axs[i,j].set_zlabel("z distance / m")
+        fig.tight_layout() 
         return(fig, axs)
     
     def fourier_distance(self, pixel_length):
@@ -161,9 +212,6 @@ class Data_Image():
             real_vector = real_length / (norm * length_per_pixel) * vector * length_per_pixel
             real_vectors.append(real_vector)
         return real_vectors
-
-
-
 
     def detect_peaks(self, imagefft_dataset):
         """Should be used with logarithmic datasets"""
@@ -242,8 +290,6 @@ class Data_Image():
         
         #distance_displacements = self.fourier_distance([np.linalg.norm(vector) for vector in pixel_displacements_cartesian])
         #print(distance_displacements)
-
-  
 
     def get_ls(self, peak_vectors):
         ls = []
@@ -344,8 +390,9 @@ class Data_Image():
                         [0, 0, 1]])
         R = Rx @ Ry @ Rz
         return np.squeeze(np.asarray(R @ np.transpose(np.matrix(vector))))
-
+"""
 lattice_params = []
+image_numbers = []
 
 directory = os.fsencode(data_folder)
 lattice_directory = os.fsencode(copy_folder)
@@ -357,10 +404,12 @@ for file in os.listdir(directory):
         print(str(os.path.join(directory, file)))
         filename = os.fsencode(file)
         image = Data_Image(os.path.join(directory, file).decode('UTF-8'))
-        #print(os.path.join(directory, file))
+        image.fft_lattice_param_estimate()
+        #print(os.path.join(directory, fi)
         #print(image.lattice_param_estimates)
         for estimate in image.lattice_param_estimates:
             lattice_params.append(estimate)
+            image_numbers.append(file)
         if len(image.lattice_param_estimates) != 0:
             print("A")
             print(os.path.join(lattice_directory, file).decode('UTF-8'))
@@ -378,15 +427,18 @@ for file in os.listdir(directory):
         break
 print(f"Final average: {np.mean(lattice_params)}")
 print(f"Final st.dev: {np.std(lattice_params)} with {len(lattice_params)} datapoints")
+print(f"Image numbers: {image_numbers}")
 """
 #A04782 B14000 #B14005 #A05424 #A04790 #B14075 #A07050
-image_number = "04911"
+image_number = "04772"
 image_of_interest = Data_Image(data_folder + "Image" + image_number + ".nid")
 a = image_of_interest.rotate([1,1,1], 0.3, 0.2, 1.5)
 ##print(image_of_interest.unrotate(a, -0.3, -0.2, -1.5))
-fig, axs = image_of_interest.plot_image_and_ffts()
+image_of_interest.fft_lattice_param_estimate()
+fig, axs = image_of_interest.row_plot_z_forward()
 print(image_of_interest.lattice_param_estimates)
 plt.show()
+fig.savefig("3nm_FFT_Example.png", format="png", dpi=300)
 fig.show()
 
 
